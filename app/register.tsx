@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {View, Text, Image, TextInput, Button, Alert, TouchableOpacity, KeyboardAvoidingView, ScrollView, Platform}
   from "react-native";
-import { app } from "./firebase/firebse_initialize";
+import { app } from "./firebase/firebaseConfig";
 import createUser from "./firebase/createUser";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";

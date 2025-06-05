@@ -1,155 +1,185 @@
-import React, { useState, useCallback } from "react";
-import {View, Text, Image, ScrollView, TouchableOpacity, TextInput, StyleSheet, RefreshControl, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard,} from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
+import {View,Text,Image,ScrollView,TouchableOpacity,TextInput,StyleSheet,RefreshControl,KeyboardAvoidingView,Platform,TouchableWithoutFeedback,Keyboard,Alert,} from "react-native";
 import { Swipeable } from "react-native-gesture-handler";
 import { MaterialIcons } from "@expo/vector-icons";
+import { initializeApp } from "firebase/app";
+import { getFirestore,collection,query,orderBy,onSnapshot,doc,updateDoc,deleteDoc,writeBatch,} from "firebase/firestore";
+import { firebaseConfig } from "./firebase/firebase_initialize";
+
+// Initialize Firebase app
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+interface Notification {
+  id: string;
+  title: string;
+  description: string;
+  image: string;
+  dateGroup: string;
+  read: boolean;
+  selected: boolean;
+}
 
 const NotificationsScreen = () => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [notifications, setNotifications] = useState([
-    {
-      id: "1",
-      title: "New Job Match",
-      description: "A new job matched your profile.",
-      image: "https://avatar.iran.liara.run/public/15",
-      dateGroup: "Today",
-      read: false,
-      selected: false,
-    },
-    {
-      id: "2",
-      title: "Interview Reminder",
-      description: "Don't forget your interview at 3 PM tomorrow.",
-      image: "https://avatar.iran.liara.run/public/92",
-      dateGroup: "Last Week",
-      read: false,
-      selected: false,
-    },
-    {
-      id: "3",
-      title: "Message from Career Coach",
-      description: "Your coach sent you a message.",
-      image: "https://avatar.iran.liara.run/public/42",
-      dateGroup: "Last Week",
-      read: false,
-      selected: false,
-    },
-    {
-      id: "4",
-      title: "New Article Posted",
-      description: "Check out the latest career advice article.",
-      image: "https://avatar.iran.liara.run/public/27",
-      dateGroup: "Last Month",
-      read: true,
-      selected: false,
-    },
-    {
-      id: "5",
-      title: "New Message",
-      description: "You've received a message from a recruiter.",
-      image: "https://avatar.iran.liara.run/public/13",
-      dateGroup: "Last Month",
-      read: true,
-      selected: false,
-    },
-  ]);
-
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showUndoSnackbar, setShowUndoSnackbar] = useState(false);
-  const [deletedNotification, setDeletedNotification] = useState<null | {
-    id: string;
-    title: string;
-    description: string;
-    image: string;
-    dateGroup: string;
-    read: boolean;
-    selected: boolean;
-  }>(null);
+  const [deletedNotification, setDeletedNotification] = useState<Notification | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [dropdownVisible, setDropdownVisible] = useState(false);
   const [allSelected, setAllSelected] = useState(false);
 
-  interface Notification {
-    id: string;
-    title: string;
-    description: string;
-    image: string;
-    dateGroup: string;
-    read: boolean;
-    selected: boolean;
-  }
+  // Load notifications from Firestore and listen for updates
+  useEffect(() => {
+    const notificationsRef = collection(db, "notifications");
+    const q = query(notificationsRef, orderBy("timestamp", "desc"));
 
-  const toggleReadStatus = (id: string): void => {
-    setNotifications((prev: Notification[]) =>
-      prev.map((n: Notification) => (n.id === id ? { ...n, read: !n.read } : n))
-    );
-  };
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const notifList: Notification[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        notifList.push({
+          id: docSnap.id,
+          title: data.title,
+          description: data.description,
+          image: data.avatarUrl,
+          dateGroup: "",
+          read: data.read,
+          selected: false,
+        });
+      });
+      setNotifications(notifList);
+      setAllSelected(false);
+    });
 
-  interface DeletedNotification {
-    id: string;
-    title: string;
-    description: string;
-    image: string;
-    dateGroup: string;
-    read: boolean;
-    selected: boolean;
-  }
+    return () => unsubscribe();
+  }, []);
 
-  const deleteNotification = (id: string): void => {
-    const deleted: DeletedNotification | undefined = notifications.find((n) => n.id === id);
-    if (deleted) setDeletedNotification(deleted);
-    setNotifications((prev: Notification[]) => prev.filter((n: Notification) => n.id !== id));
-    setShowUndoSnackbar(true);
-    setTimeout(() => setShowUndoSnackbar(false), 10000);
-  };
+  // Toggle read/unread and update Firestore
+  const toggleReadStatus = async (id: string) => {
+    const notification = notifications.find((n) => n.id === id);
+    if (!notification) return;
 
-  const undoDelete = () => {
-    if (deletedNotification) {
-      setNotifications((prev) => [...prev, deletedNotification]);
-      setShowUndoSnackbar(false);
+    try {
+      const notifDocRef = doc(db, "notifications", id);
+      await updateDoc(notifDocRef, { read: !notification.read });
+    } catch (error) {
+      console.error("Error updating read status:", error);
+      Alert.alert("Error", "Failed to update notification status.");
     }
   };
 
-  const handleSearchChange = (text: string): void => setSearchQuery(text);
+  const deleteNotification = async (id: string) => {
+    const deleted = notifications.find((n) => n.id === id);
+    if (!deleted) return;
+  
+    setDeletedNotification(deleted);
+    setShowUndoSnackbar(true);
+  
+    // Temporarily remove from local state
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  
+    // Set a timer to delete from Firestore after 10 seconds
+    const timeoutId = setTimeout(async () => {
+      try {
+        await deleteDoc(doc(db, "notifications", id));
+        setDeletedNotification(null);
+      } catch (error) {
+        console.error("Error deleting notification:", error);
+        Alert.alert("Error", "Failed to delete notification.");
+      } finally {
+        setShowUndoSnackbar(false);
+      }
+    }, 10000); // 10 seconds
+  
+    // Save timeout ID to cancel if undo is clicked
+    setUndoTimeoutId(timeoutId as unknown as NodeJS.Timeout);
+  };
+  
+  const [undoTimeoutId, setUndoTimeoutId] = useState<NodeJS.Timeout | null>(null);
+  
+  const undoDelete = () => {
+    if (deletedNotification) {
+      // Restore in local state
+      setNotifications((prev) => [deletedNotification!, ...prev]);
+      setDeletedNotification(null);
+      setShowUndoSnackbar(false);
+  
+      // Cancel Firestore delete
+      if (undoTimeoutId) {
+        clearTimeout(undoTimeoutId);
+        setUndoTimeoutId(null);
+      }
+    }
+  };
+  
+  // Search input handler
+  const handleSearchChange = (text: string) => setSearchQuery(text);
 
+  // Select all / deselect all
   const handleSelectAll = () => {
-    const newState = !allSelected;
-    setAllSelected(newState);
-    setNotifications((prev) =>
-      prev.map((n) => ({ ...n, selected: newState }))
-    );
+    const newSelected = !allSelected;
+    setAllSelected(newSelected);
+    setNotifications((prev) => prev.map((n) => ({ ...n, selected: newSelected })));
   };
 
+  // Toggle dropdown menu
   const openDropdown = () => setDropdownVisible((prev) => !prev);
 
-  interface MarkAllAsParams {
-    status: "read" | "unread";
-  }
+  // Bulk mark selected notifications as read/unread
+  const markAllAs = async (status: "read" | "unread") => {
+    const batch = writeBatch(db);
+    notifications.forEach((n) => {
+      if (n.selected) {
+        const notifDocRef = doc(db, "notifications", n.id);
+        batch.update(notifDocRef, { read: status === "read" });
+      }
+    });
 
-  const markAllAs = (status: MarkAllAsParams["status"]): void => {
-    setNotifications((prev: Notification[]) =>
-      prev.map((n: Notification) =>
-        n.selected ? { ...n, read: status === "read", selected: false } : n
-      )
-    );
-    setDropdownVisible(false);
-    setAllSelected(false);
+    try {
+      await batch.commit();
+      setDropdownVisible(false);
+      setAllSelected(false);
+      setNotifications((prev) =>
+        prev.map((n) => (n.selected ? { ...n, read: status === "read", selected: false } : n))
+      );
+    } catch (error) {
+      console.error("Error updating notifications:", error);
+      Alert.alert("Error", "Failed to update notifications.");
+    }
   };
 
+  // Cancel selection
   const cancelSelection = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, selected: false })));
     setDropdownVisible(false);
     setAllSelected(false);
   };
 
-  const bulkDelete = () => {
+  // Bulk delete selected notifications
+  const bulkDelete = async () => {
     const toDelete = notifications.filter((n) => n.selected);
     if (toDelete.length === 0) return;
 
-    setDeletedNotification(null); // disable single undo for bulk delete
-    setNotifications((prev) => prev.filter((n) => !n.selected));
-    setDropdownVisible(false);
-    setAllSelected(false);
+    const batch = writeBatch(db);
+    toDelete.forEach((n) => {
+      const notifDocRef = doc(db, "notifications", n.id);
+      batch.delete(notifDocRef);
+    });
+
+    try {
+      await batch.commit();
+      setDropdownVisible(false);
+      setAllSelected(false);
+      // Disable undo after bulk delete
+      setDeletedNotification(null);
+    } catch (error) {
+      console.error("Error deleting notifications:", error);
+      Alert.alert("Error", "Failed to delete notifications.");
+    }
   };
 
+  // Filter notifications by search query
   const filteredNotifications = notifications.filter(
     (n) =>
       n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -159,37 +189,25 @@ const NotificationsScreen = () => {
   const unreadNotifications = filteredNotifications.filter((n) => !n.read);
   const readNotifications = filteredNotifications.filter((n) => n.read);
 
-  interface RenderRightActionsProps {
-    id: string;
-  }
-
-  const renderRightActions = ({ id }: RenderRightActionsProps): JSX.Element => (
-    <TouchableOpacity
-      style={styles.deleteButton}
-      onPress={() => deleteNotification(id)}
-    >
+  // Swipe delete button UI
+  const renderRightActions = (id: string) => (
+    <TouchableOpacity style={styles.deleteButton} onPress={() => deleteNotification(id)}>
       <Text style={styles.deleteText}>DELETE</Text>
     </TouchableOpacity>
   );
 
-  interface NotificationItemProps {
-    item: Notification;
-    isRead: boolean;
-  }
-
-  const renderNotificationItem = ({ item, isRead }: NotificationItemProps): JSX.Element => (
+  // Single notification item UI
+  const renderNotificationItem = (item: Notification, isRead: boolean) => (
     <TouchableOpacity
       key={item.id}
-      onLongPress={() => {
-        setNotifications((prev: Notification[]) =>
-          prev.map((n: Notification) =>
-            n.id === item.id ? { ...n, selected: !n.selected } : n
-          )
-        );
-      }}
+      onLongPress={() =>
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === item.id ? { ...n, selected: !n.selected } : n))
+        )
+      }
       activeOpacity={0.8}
     >
-      <Swipeable renderRightActions={() => renderRightActions({ id: item.id })}>
+      <Swipeable renderRightActions={() => renderRightActions(item.id)}>
         <View
           style={[
             styles.notificationContainer,
@@ -206,9 +224,7 @@ const NotificationsScreen = () => {
           {!isRead && <View style={styles.unreadDot} />}
           <Image source={{ uri: item.image }} style={styles.avatar} />
           <View style={{ marginLeft: 16, flex: 1 }}>
-            <Text style={[styles.title, isRead && styles.readTitle]}>
-              {item.title}
-            </Text>
+            <Text style={[styles.title, isRead && styles.readTitle]}>{item.title}</Text>
             <Text style={[styles.description, isRead && styles.readDescription]}>
               {item.description}
             </Text>
@@ -225,22 +241,17 @@ const NotificationsScreen = () => {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    // Force reload notifications (simulate refresh)
+    // Actually onSnapshot updates live so no extra action needed
     setTimeout(() => setRefreshing(false), 1500);
   }, []);
 
   return (
-    <TouchableWithoutFeedback
-      onPress={() => dropdownVisible && setDropdownVisible(false)}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
+    <TouchableWithoutFeedback onPress={() => dropdownVisible && setDropdownVisible(false)}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView
           style={{ backgroundColor: "#f5f5f5" }}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.searchContainer}>
@@ -254,10 +265,7 @@ const NotificationsScreen = () => {
               />
             </View>
 
-            <TouchableOpacity
-              style={styles.checkboxContainer}
-              onPress={handleSelectAll}
-            >
+            <TouchableOpacity style={styles.checkboxContainer} onPress={handleSelectAll}>
               <MaterialIcons
                 name={allSelected ? "check-box" : "check-box-outline-blank"}
                 size={24}
@@ -272,16 +280,10 @@ const NotificationsScreen = () => {
 
           {dropdownVisible && (
             <View style={styles.dropdownMenu}>
-              <TouchableOpacity
-                onPress={() => markAllAs("read")}
-                style={styles.dropdownItem}
-              >
+              <TouchableOpacity onPress={() => markAllAs("read")} style={styles.dropdownItem}>
                 <Text style={styles.dropdownText}>Read</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => markAllAs("unread")}
-                style={styles.dropdownItem}
-              >
+              <TouchableOpacity onPress={() => markAllAs("unread")} style={styles.dropdownItem}>
                 <Text style={styles.dropdownText}>Unread</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={bulkDelete} style={styles.dropdownItem}>
@@ -297,14 +299,14 @@ const NotificationsScreen = () => {
           {unreadNotifications.length === 0 ? (
             <Text style={styles.emptyText}>No unread notifications</Text>
           ) : (
-            unreadNotifications.map((item) => renderNotificationItem({ item, isRead: false }))
-)}
+            unreadNotifications.map((item) => renderNotificationItem(item, false))
+          )}
 
           <Text style={styles.sectionHeader}>Read Notifications</Text>
           {readNotifications.length === 0 ? (
             <Text style={styles.emptyText}>No read notifications</Text>
           ) : (
-            readNotifications.map((item) => renderNotificationItem({ item, isRead: true }))
+            readNotifications.map((item) => renderNotificationItem(item, true))
           )}
 
           {showUndoSnackbar && (
@@ -405,11 +407,9 @@ const styles = StyleSheet.create({
   },
   readTitle: {
     color: "#888",
-    // no strikethrough
   },
   readDescription: {
     color: "#888",
-    // no strikethrough
   },
   deleteButton: {
     backgroundColor: "#ff4d4d",
