@@ -69,50 +69,34 @@ const NotificationsScreen = () => {
     }
   };
 
+  // Delete a notification and update Firestore
   const deleteNotification = async (id: string) => {
     const deleted = notifications.find((n) => n.id === id);
     if (!deleted) return;
-  
-    setDeletedNotification(deleted);
-    setShowUndoSnackbar(true);
-  
-    // Temporarily remove from local state
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
-  
-    // Set a timer to delete from Firestore after 10 seconds
-    const timeoutId = setTimeout(async () => {
-      try {
-        await deleteDoc(doc(db, "notifications", id));
-        setDeletedNotification(null);
-      } catch (error) {
-        console.error("Error deleting notification:", error);
-        Alert.alert("Error", "Failed to delete notification.");
-      } finally {
-        setShowUndoSnackbar(false);
-      }
-    }, 10000); // 10 seconds
-  
-    // Save timeout ID to cancel if undo is clicked
-    setUndoTimeoutId(timeoutId as unknown as NodeJS.Timeout);
-  };
-  
-  const [undoTimeoutId, setUndoTimeoutId] = useState<NodeJS.Timeout | null>(null);
-  
-  const undoDelete = () => {
-    if (deletedNotification) {
-      // Restore in local state
-      setNotifications((prev) => [deletedNotification!, ...prev]);
-      setDeletedNotification(null);
-      setShowUndoSnackbar(false);
-  
-      // Cancel Firestore delete
-      if (undoTimeoutId) {
-        clearTimeout(undoTimeoutId);
-        setUndoTimeoutId(null);
-      }
+
+    try {
+      await deleteDoc(doc(db, "notifications", id));
+      setDeletedNotification(deleted);
+      setShowUndoSnackbar(true);
+      setTimeout(() => setShowUndoSnackbar(false), 10000);
+    } catch (error) {
+      console.error("Error deleting notification:", error);
+      Alert.alert("Error", "Failed to delete notification.");
     }
   };
-  
+
+  // Undo delete (restore locally only - no Firestore restore)
+  const undoDelete = () => {
+    if (deletedNotification) {
+      // We can't restore in Firestore without a backend, so just show alert
+      Alert.alert(
+        "Undo not supported",
+        "Undo works only locally. To restore a deleted notification, reload data from server."
+      );
+      setShowUndoSnackbar(false);
+    }
+  };
+
   // Search input handler
   const handleSearchChange = (text: string) => setSearchQuery(text);
 
